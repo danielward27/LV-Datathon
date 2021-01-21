@@ -7,22 +7,79 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Imports
+```{r message=FALSE}
+library(tidyverse)
+library(corrplot)
+library(GGally)
+```
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Introduction
+Exploratory data analysis for LV Datathon project.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
+## Read in data
 ```{r cars}
-summary(cars)
+df <- read.csv("data/train.csv")
+
+# Make column names consistent
+cols <- colnames(df) %>%
+  str_replace_all(fixed("."), "_")  %>%
+  tolower()
+
+cols[cols == "employmentstatus"] <- "employment_status"
+colnames(df) <- cols
+
+# Make variables with low number of unique values factors
+df <- df %>%
+  mutate(number_of_open_complaints = as.factor(number_of_open_complaints),
+         number_of_policies = as.factor(number_of_policies))
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+Are there missing values?
+```{r}
+table(is.na(df))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Target variable
+Target variable is `total_claim_amount`:
+```{r}
+qplot(df$total_claim_amount, geom = "histogram", bins = 40)
+```
+
+Are there zero values?
+```{r}
+table(df$total_claim_amount == 0)
+```
+
+No but there is strangely small amounts. If this is pounds and these aren't mistakes then these are some real petty people:
+```{r}
+table(df$total_claim_amount < 1)
+```
+
+## Predictor variables
+### Continous variables
+```{r}
+df %>%
+  select_if(is.numeric) %>%
+  ggpairs(aes(alpha = 0.2))
+```
+
+In terms of the correlation only two of the continuous variables seem to have a strong association with the `total_claim_amount`. These are `income` and `monthly_premium_auto`.
+```{r}
+df %>%
+  select_if(is.numeric) %>%
+  pivot_longer(-total_claim_amount, names_to = "feature", values_to = "X") %>%
+  ggplot(aes(x = X, y = total_claim_amount)) +
+  geom_point() +
+  facet_wrap(~feature, scales = "free")
+```
+`months_since_last_claim` and `months_since_policy_inception` don't seem like they will be particularly useful features. I will drop them for now.
+We can see that having no income seems to be important. Lets add that feature.
+```{r}
+df <- df %>%
+  select(-months_since_last_claim, -months_since_policy_inception) %>%
+  mutate(has_income = df$income > 0)
+```
+
+
+
