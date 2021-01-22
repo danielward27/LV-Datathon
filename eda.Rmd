@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Imports
 ```{r message=FALSE}
 library(tidyverse)
-library(corrplot)
+library(lubridate)
 library(GGally)
 ```
 
@@ -53,11 +53,11 @@ table(df$total_claim_amount == 0)
 
 No but there is strangely small amounts. If this is pounds and these aren't mistakes then these are some real petty people:
 ```{r}
-table(df$total_claim_amount < 1)
+sum(df$total_claim_amount < 1)
 ```
 
 ## Predictor variables
-### Continous variables
+### Continuous variables
 ```{r}
 df %>%
   select_if(is.numeric) %>%
@@ -74,12 +74,91 @@ df %>%
   facet_wrap(~feature, scales = "free")
 ```
 `months_since_last_claim` and `months_since_policy_inception` don't seem like they will be particularly useful features. I will drop them for now.
-We can see that having no income seems to be important. Lets add that feature.
+We can see that having no income seems to be important, this is captured by the `employment_status` variable.
 ```{r}
 df <- df %>%
-  select(-months_since_last_claim, -months_since_policy_inception) %>%
-  mutate(has_income = df$income > 0)
+  select(-months_since_last_claim, -months_since_policy_inception)
 ```
+
+
+```{r}
+df %>%
+  ggplot(aes(x = monthly_premium_auto, y = total_claim_amount,
+             colour = location_code)) +
+  geom_point()
+```
+
+I'm not sure exactly what is causing the weird structure in the plot above, but `location_code` separates it out extremely well. The top "segment" can be separated out using employment status.
+
+```{r}
+df %>%
+  ggplot(aes(x = monthly_premium_auto, y = total_claim_amount,
+             colour = employment_status)) +
+  geom_point()
+```
+
+
+## Categorical variables
+```{r}
+df %>%
+  select_if(is.character) %>%
+  apply(2, {function(x) length(unique(x))})
+```
+Drop customer (all unique so likely not useful) and country (all US).
+```{r}
+df <- select(df, -customer, -country)
+```
+
+Look at effective to date see if that could be useful:
+```{r}
+df$effective_to_date <- as.Date(mdy(df$effective_to_date))
+
+df %>%
+  ggplot(aes(x=effective_to_date, y=total_claim_amount)) +
+  geom_point()
+```
+Assume not informative:
+```{r}
+df <- select(df, -effective_to_date)
+```
+
+```{r}
+df <- df %>%
+  mutate_if(is.character, as.factor)
+
+df %>%
+  select_if(function(col) is.factor(col) | all(col == .$total_claim_amount)) %>%
+  pivot_longer(-total_claim_amount) %>%
+  ggplot(aes(x = value, y = total_claim_amount)) +
+  geom_boxplot() +
+  facet_wrap(~name, scales = "free", nrow = 3) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# Bit cramped so will save it larger
+ggsave("plots/boxplot.png", width = 10, height = 10)
+```
+
+`location_code` seems very informative. Below I drop a bunch of variables that don't look particularly informative:
+```{r}
+# These ones look ok to drop (if aiming for a simple model)
+df <- df %>%
+  select(-sales_channel, -state, -state_code, -vehicle_size)
+
+# These ones are perhaps a bit more dubious. But for a simple first model might
+# be worth dropping
+df <- df %>%
+  select(-claim_reason, -education, -number_of_policies, -policy, -policy_type,
+         -response, -gender, -number_of_open_complaints)
+```
+
+Write out this simplified data set:
+```{r}
+write_csv(df, "data/train_simple.csv")
+```
+
+
+
+
 
 
 
