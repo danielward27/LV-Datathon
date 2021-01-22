@@ -12,6 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(lubridate)
 library(GGally)
+library(randomForest)
 ```
 
 ## Introduction
@@ -33,6 +34,8 @@ colnames(df) <- cols
 df <- df %>%
   mutate(number_of_open_complaints = as.factor(number_of_open_complaints),
          number_of_policies = as.factor(number_of_policies))
+
+orig_data <- df
 ```
 
 Are there missing values?
@@ -75,11 +78,7 @@ df %>%
 ```
 `months_since_last_claim` and `months_since_policy_inception` don't seem like they will be particularly useful features. I will drop them for now.
 We can see that having no income seems to be important, this is captured by the `employment_status` variable.
-```{r}
-df <- df %>%
-  select(-months_since_last_claim, -months_since_policy_inception)
-```
-
+#1
 
 ```{r}
 df %>%
@@ -104,10 +103,8 @@ df %>%
   select_if(is.character) %>%
   apply(2, {function(x) length(unique(x))})
 ```
-Drop customer (all unique so likely not useful) and country (all US).
-```{r}
-df <- select(df, -customer, -country)
-```
+Customer is all unique so likely not useful. Country is all US so useless.
+#2
 
 Look at effective to date see if that could be useful:
 ```{r}
@@ -117,16 +114,15 @@ df %>%
   ggplot(aes(x=effective_to_date, y=total_claim_amount)) +
   geom_point()
 ```
-Assume not informative:
-```{r}
-df <- select(df, -effective_to_date)
-```
+Seems it is likely not informative.
+#3
+
 
 ```{r}
-df <- df %>%
-  mutate_if(is.character, as.factor)
-
 df %>%
+  mutate_if(is.character, as.factor) %>%
+  select(-customer, -country, -effective_to_date,
+         -months_since_last_claim, months_since_policy_inception) %>%
   select_if(function(col) is.factor(col) | all(col == .$total_claim_amount)) %>%
   pivot_longer(-total_claim_amount) %>%
   ggplot(aes(x = value, y = total_claim_amount)) +
@@ -138,23 +134,63 @@ df %>%
 ggsave("plots/boxplot.png", width = 10, height = 10)
 ```
 
-`location_code` seems very informative. Below I drop a bunch of variables that don't look particularly informative:
+
+# Feature selection
+From this we can remove features that don't seem informative:
 ```{r}
 # These ones look ok to drop (if aiming for a simple model)
 df <- df %>%
-  select(-sales_channel, -state, -state_code, -vehicle_size)
+  select(-sales_channel, -state, -state_code, -vehicle_size, -months_since_policy_inception,
+         -months_since_last_claim, -customer, -country, -effective_to_date)
 
 # These ones are perhaps a bit more dubious. But for a simple first model might
 # be worth dropping
 df <- df %>%
   select(-claim_reason, -education, -number_of_policies, -policy, -policy_type,
-         -response, -gender, -number_of_open_complaints)
+         -response, -gender, -number_of_open_complaints, -marital_status)
+
+features_kept <- colnames(df)
 ```
 
 Write out this simplified data set:
 ```{r}
 write_csv(df, "data/train_simple.csv")
 ```
+
+## Importances
+Look at feature importances from random forest just to check we have done reasonable feature selection:
+```{r}
+df <- orig_data
+
+# Remove obviously useless ones
+df <- df %>%
+  select(-state, -country, -effective_to_date, -customer) %>%
+  mutate_if(is.character, as.factor)
+
+df %>%
+  select_if(is.factor) %>%
+  apply(2, function(col) length(unique(col)))
+
+# Subset for speed
+rf <- randomForest(total_claim_amount ~ ., data = df[sample(1:nrow(df), 3000), ])
+
+imp <- tibble(feature = row.names(rf$importance),
+              mean_decrease_gini = as.vector(rf$importance))
+
+# colour by included
+imp$included <- imp$feature %in% features_kept
+
+imp %>%
+  arrange(desc(mean_decrease_gini)) %>%
+  mutate(feature = factor(feature, levels = .$feature)) %>%
+  ggplot(aes(x = feature, y = mean_decrease_gini, fill = included)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+Likely that random forest finds income useful as it can use it to determine employment status anyway. Could be worth imputing predicted salaries instead of 0s in unemployed people.
+
 
 
 
