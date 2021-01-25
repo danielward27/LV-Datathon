@@ -19,9 +19,19 @@ df <- read.csv("data/train_simple.csv", stringsAsFactors = TRUE)
 df <- select(df, -coverage)  # Doesn't seem particularly useful
 ```
 
-## Impute income variable
+## Fit linear regression without imputing income
 As lots of the incomes are zero, it makes sense to impute these, as employment status is a categorical variable anyway.
-```{r message=FALSE}
+```{r}
+res <- lm(total_claim_amount ~ employment_status + location_code + 
+             vehicle_class + income + monthly_premium_auto +
+             employment_status*monthly_premium_auto + 
+             location_code*monthly_premium_auto, data = df)
+
+summary(res)
+```
+
+## Impute income variable
+```{r results='hide'}
 df_big <- read.csv("data/train.csv", stringsAsFactors = TRUE)
 df_big <- df_big %>% select(-Country, -Customer)
 df_big$Income[df_big$Income == 0] <- NA
@@ -45,20 +55,10 @@ res <- lm(total_claim_amount ~ employment_status + location_code +
 
 summary(res)
 ```
-Could be worth using robust regression if aim is minimizing absolute difference.
+Exactly the same performance, great.
 
 ## GAM
-Does using a GAM improve this:
-```{r}
-res <- gam(total_claim_amount ~ employment_status + location_code + 
-             vehicle_class + s(income) + s(monthly_premium_auto) +
-             employment_status*monthly_premium_auto + 
-             location_code*monthly_premium_auto,
-           data = df)
-summary(res)
-```
-
-Default GAM doesn't help much with this default model. Perhaps this is due to the fact mostly linear relationship (from EDA) plots this could be reasonable.
+Does using a GAM improve performance:
 
 ```{r}
 res <- gam(total_claim_amount ~ employment_status + location_code + 
@@ -68,9 +68,10 @@ res <- gam(total_claim_amount ~ employment_status + location_code +
 
 summary(res)
 ```
-Hmmm seems to do about the same, but I don't really know what I am doing. Need to check models with MAE and CV, maybe consider robust regression or quantreg as we are interested in absolute error.
+Hmmm seems to do about the same, but I don't really know what I am doing. Perhaps this is due to the fact that it is mostly linear relationships (from EDA) so these result could be reasonable.
 
-Median regression is a thing https://cran.r-project.org/web/packages/quantreg/vignettes/rq.pdf. This will probably work better for absolute error?
+## Things to do
+See if we can get GAMs to work better. Calculate cross-validation absolute error for each model.  Consider robust regression or quantreg as we are interested in absolute error, rather than the mean square error. [Median regression](https://cran.r-project.org/web/packages/quantreg/vignettes/rq.pdf) is a thing. This will probably work better for absolute error?
 
 
 
