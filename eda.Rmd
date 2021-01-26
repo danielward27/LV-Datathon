@@ -19,7 +19,7 @@ library(randomForest)
 Exploratory data analysis for LV Datathon project.
 
 ## Read in data
-```{r cars}
+```{r}
 df <- read.csv("data/train.csv")
 
 # Make column names consistent
@@ -76,8 +76,7 @@ df %>%
   geom_point() +
   facet_wrap(~feature, scales = "free")
 ```
-`months_since_last_claim` and `months_since_policy_inception` don't seem like they will be particularly useful features. I will drop them for now.
-We can see that having no income seems to be important, this is captured by the `employment_status` variable.
+`months_since_last_claim` and `months_since_policy_inception` don't seem like they will be particularly useful features. I will drop them for now. We can see that having no income seems to be important, this is captured by the `employment_status` variable, so perhaps income won't be useful.
 
 ```{r}
 df %>%
@@ -139,19 +138,18 @@ df <- df %>%
   select(-sales_channel, -state, -state_code, -vehicle_size, -months_since_policy_inception,
          -months_since_last_claim, -customer, -country, -effective_to_date)
 
-# These ones are perhaps a bit more dubious. But for a simple first model might
-# be worth dropping
+# These ones are perhaps a bit more dubious but seem like they will be ok to drop
 df <- df %>%
   select(-claim_reason, -education, -number_of_policies, -policy, -policy_type,
-         -response, -gender, -number_of_open_complaints, -marital_status)
+         -response, -gender, -number_of_open_complaints, -marital_status, -coverage)
 
 features_kept <- colnames(df)
 ```
-
 Write out this simplified data set:
 ```{r}
 write_csv(df, "data/train_simple.csv")
 ```
+
 
 ## Importances
 Look at feature importances from random forest just to check we have done reasonable feature selection. This could help find for example features that are useful in a more complicated way (e.g. through interactions with other variables), that may not be obvious from the plots above.
@@ -186,6 +184,8 @@ imp %>%
 ```
 
 Likely that random forest finds income useful as it can use it to determine employment status anyway. Could be worth imputing predicted salaries instead of 0s in unemployed people.
+
+
 
 
 

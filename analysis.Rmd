@@ -13,24 +13,39 @@ library(mgcv)
 library(tidyverse)
 library(caret)
 library(mice)
-
+library(quantreg)
 
 df <- read.csv("data/train_simple.csv", stringsAsFactors = TRUE)
-df <- select(df, -coverage)  # Doesn't seem particularly useful
+
+train_idx <- read.csv("data/X_train.csv")$X
+train_df <- df[train_idx, ]
+test_df <- df[-train_idx, ]
+rm(df)
+```
+
+## Define metric
+```{r}
+mean_abs_err <- function(y_hat, y){
+  sum(abs(y_hat - y)) / length(y_hat)
+}
 ```
 
 ## Fit linear regression without imputing income
-As lots of the incomes are zero, it makes sense to impute these, as employment status is a categorical variable anyway.
+As lots of the incomes are zero, it makes sense to impute these, as employment status is a categorical variable anyway which accounts for those with no income. First we can get a baseline without imputing income.
 ```{r}
-res <- lm(total_claim_amount ~ employment_status + location_code + 
-             vehicle_class + income + monthly_premium_auto +
+mod <- lm(total_claim_amount ~ vehicle_class + income +
              employment_status*monthly_premium_auto + 
-             location_code*monthly_premium_auto, data = df)
+             location_code*monthly_premium_auto, data = train_df)
 
-summary(res)
+y_hat <- predict(mod, newdata = test_df)
+
+summary(mod)
+
+mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
+print(paste("MAE of:", round(mae, 2)))
+
 ```
-
-## Impute income variable
+## Try imputing income variable
 ```{r results='hide'}
 df_big <- read.csv("data/train.csv", stringsAsFactors = TRUE)
 df_big <- df_big %>% select(-Country, -Customer)
@@ -38,40 +53,127 @@ df_big$Income[df_big$Income == 0] <- NA
 
 imputations <- complete(mice(df_big, method = "pmm", seed=1))
 
-df$income <- imputations$Income
+train_df$income <- imputations$Income[train_idx]
+test_df$income <- imputations$Income[-train_idx]
 ```
 
+## Linear regression with "missing" income values imputed
 ```{r}
-head(df)
-```
-
-
-## Look at linear regression for baseline
-```{r}
-res <- lm(total_claim_amount ~ employment_status + location_code + 
-             vehicle_class + income + monthly_premium_auto +
+mod <- lm(total_claim_amount ~ vehicle_class + income +
              employment_status*monthly_premium_auto + 
-             location_code*monthly_premium_auto, data = df)
+             location_code*monthly_premium_auto, data = train_df)
 
-summary(res)
+y_hat <- predict(mod, newdata = test_df)
+
+summary(mod)
+
+mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
+print(paste("MAE of:", round(mae, 2)))
 ```
-Exactly the same performance, great.
+Doesn't seem to make much difference.
 
 ## GAM
-Does using a GAM improve performance:
+Does using a GAM improve performance? Again using the data with imputed income (even though it probably doesn't make much difference).
 
 ```{r}
-res <- gam(total_claim_amount ~ employment_status + location_code + 
+mod <- gam(total_claim_amount ~ employment_status + location_code + 
              vehicle_class + s(income) +
              s(monthly_premium_auto, by = employment_status) +
-             s(monthly_premium_auto, by = location_code), data = df)
+             s(monthly_premium_auto, by = location_code), data = train_df)
 
-summary(res)
+y_hat <- predict(mod, newdata = test_df)
+summary(mod)
+
+mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
+print(paste("MAE of:", round(mae, 2)))
 ```
-Hmmm seems to do about the same, but I don't really know what I am doing. Perhaps this is due to the fact that it is mostly linear relationships (from EDA) so these result could be reasonable.
+Default GAM does worse during cross-validation! Not too surprising when you see the plots though as they look very linear. Although I could also be doing something wrong...
 
-## Things to do
-See if we can get GAMs to work better. Calculate cross-validation absolute error for each model.  Consider robust regression or quantreg as we are interested in absolute error, rather than the mean square error. [Median regression](https://cran.r-project.org/web/packages/quantreg/vignettes/rq.pdf) is a thing. This will probably work better for absolute error?
+
+## Quantile regression
+Since we are aiming the minimize the mean absolute error. Perhaps fitting a linear model using median regression will likely perform better. This is optimal for minimizing mean absolute error, whereas the mean is optimal for the squared error loss function.
+
+```{r}
+mod <- rq(total_claim_amount ~ vehicle_class + income +
+     employment_status*monthly_premium_auto + 
+     location_code*monthly_premium_auto, data = train_df)
+
+y_hat <- predict(mod, newdata = test_df)
+
+summary.rq(mod, se = "boot")  # bootstrap se estimates
+
+mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
+print(paste("MAE of:", round(mae, 2)))
+```
+This performs a lot better. We should be able to simplify things further based on the zero coefficients above.
+
+Note that here we use the pairwise bootstrap estimate of the standard errors. This is more robust to heteroscadasticity than the standard method (e.g. see [this paper](https://www.tandfonline.com/doi/pdf/10.1198/106186005X27563?needAccess=true)). We can see that we have heteroscadasticity here:
+```{r}
+plot(test_df$monthly_premium_auto, (y_hat-test_df$total_claim_amount),
+     xlab = "monthly_premium_auto", ylab = "rediduals")
+```
+
+We will slim things down and simplify the model to make a final model:
+
+## Final Model
+Simplify using the following:
+
+- Simplify `employment_status` into a boolean `is_employed`, as being unemployed was the only significant factor level.
+
+- Drop income and vehicle class
+
+```{r}
+train_df_simple <- train_df %>%
+  mutate(is_unemployed = employment_status == "Unemployed") %>%
+  select(-employment_status, -income, -vehicle_class)
+
+test_df_simple <- test_df %>%
+  mutate(is_unemployed = employment_status == "Unemployed") %>%
+  select(-employment_status, -income, -vehicle_class)
+
+head(train_df_simple)
+```
+
+Note that these are primary variables identified in the EDA. We observed that the factor variables `is_unemployed` and `location_code` show a strong interaction with the `monthly_premium_auto` variable:
+```{r}
+train_df %>%
+  ggplot(aes(x = monthly_premium_auto, y = total_claim_amount,
+             col = location_code)) +
+  geom_point()
+```
+
+```{r}
+train_df_simple %>%
+  ggplot(aes(x = monthly_premium_auto, y = total_claim_amount,
+             colour = is_unemployed)) +
+  geom_point(alpha = 0.5)
+```
+
+The final, very simple model, using just three features is below:
+
+```{r}
+mod <- rq(total_claim_amount ~ 
+            is_unemployed*monthly_premium_auto + 
+            location_code*monthly_premium_auto, data = train_df_simple)
+
+y_hat <- predict(mod, test_df_simple)
+
+summary.rq(mod, se = "boot")
+
+mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
+print(paste("MAE of:", round(mae, 2)))
+```
+
+Now we have the best model. I will retrain it on the whole data set. Then this can be used to predict on the test set when it is released:
+```{r}
+df <- rbind(train_df_simple, test_df_simple)
+
+mod <- rq(total_claim_amount ~ 
+            is_unemployed*monthly_premium_auto + 
+            location_code*monthly_premium_auto, data = df)
+
+# Put test data here...
+```
 
 
 
