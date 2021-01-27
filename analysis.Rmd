@@ -149,12 +149,14 @@ train_df_simple %>%
   geom_point(alpha = 0.5)
 ```
 
-The final, very simple model, using just three features is below:
+The final, very simple model, using just three features is below. Including all the interaction terms seems to be important.
 
 ```{r}
+train_df_simple
 mod <- rq(total_claim_amount ~ 
             is_unemployed*monthly_premium_auto + 
-            location_code*monthly_premium_auto, data = train_df_simple)
+            location_code*monthly_premium_auto +
+            is_unemployed*location_code, data = train_df_simple)
 
 y_hat <- predict(mod, test_df_simple)
 
@@ -170,7 +172,8 @@ df <- rbind(train_df_simple, test_df_simple)
 
 mod <- rq(total_claim_amount ~ 
             is_unemployed*monthly_premium_auto + 
-            location_code*monthly_premium_auto, data = df)
+            location_code*monthly_premium_auto +
+            is_unemployed*location_code, data = df)
 
 # Put test data here...
 ```
