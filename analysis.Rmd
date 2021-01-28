@@ -152,7 +152,6 @@ train_df_simple %>%
 The final, very simple model, using just three features is below. Including all the interaction terms seems to be important.
 
 ```{r}
-train_df_simple
 mod <- rq(total_claim_amount ~ 
             is_unemployed*monthly_premium_auto + 
             location_code*monthly_premium_auto +
@@ -160,11 +159,116 @@ mod <- rq(total_claim_amount ~
 
 y_hat <- predict(mod, test_df_simple)
 
-summary.rq(mod, se = "boot")
+sum <- summary.rq(mod, se = "boot")
 
 mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
 print(paste("MAE of:", round(mae, 2)))
 ```
+
+## Interpreting the model
+
+```{r}
+coef_df <- as.tibble(sum$coefficients)
+coef_df <- bind_cols(feature = rownames(sum$coefficients), coef_df)
+coef_df$feature <- str_replace(coef_df$feature, pattern = "TRUE", "")
+coef_df$feature <- str_replace(coef_df$feature, pattern = "location_code", "")
+coef_df <- coef_df %>%
+  mutate(signif = `Pr(>|t|)` < 0.05) %>%
+  select(-`t value`, - `Pr(>|t|)`)
+coef_df
+```
+
+
+### Weight plot
+
+```{r}
+ggplot(coef_df, aes(x = Value, y = feature)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = Value - `Std. Error`, xmax = Value + `Std. Error`)) +
+  geom_vline(data = NULL, xintercept = 0, linetype="dotted") +
+  labs(x = "Coefficient", y = "Feature")
+```
+
+
+
+First, visualise the main effects of the categorical variables. This is the coefficients associated with the categorical variables:
+```{r}
+cat_effects <- tibble(feature = names(mod$coefficients), coefficients = mod$coefficients)
+cat_effects$feature <- str_replace(cat_effects$feature, pattern = "TRUE", "")
+cat_effects$feature <- str_replace(cat_effects$feature, pattern = "location_code", "")
+
+cat_features <- c("is_unemployed:Suburban", "is_unemployed:Urban",
+                  "Suburban", "Urban", "is_unemployed")
+
+cat_effects
+# INCLUDE INTERATIONS HERE
+
+cat_effects$feature <- factor(cat_effects$feature, levels = cat_features)
+
+p1 <- cat_effects[cat_effects$feature %in% cat_features, ] %>%
+  ggplot(aes(x = coefficients, y=feature)) +
+  geom_col(orientation = "y")  +
+  geom_vline(data = NULL, xintercept = 0, linetype="dotted") +
+  labs(x = "Effect on total claim amount", y = "Feature")
+p1
+```
+
+Why do we get this big in
+
+
+```{r}
+non_cat <- effect %>%
+  filter(effect != 0)
+
+non_cat$feature <- str_replace(non_cat$feature, pattern = "location_code", "")
+
+non_cat <-  non_cat %>%
+  filter(!(feature %in% cat_features), feature != "(Intercept)")
+
+
+non_cat$feature <-factor(
+  non_cat$feature,
+  levels = c("monthly_premium_auto:Suburban", "monthly_premium_auto:Urban",
+             "is_unemployed:monthly_premium_auto", "monthly_premium_auto"
+             )
+)
+
+
+p2 <- ggplot(non_cat) + 
+  geom_boxplot(aes(x = effect, y = feature), orientation = "y") +
+  labs(x = "Effect on total claim amount", y = "Feature") +
+  geom_vline(data = NULL, xintercept = 0, linetype="dotted")
+p2
+```
+
+
+The interactions seemed particularly important too:
+```{r}
+effect <- t(t(mod$x) * mod$coefficients)
+
+effect <- effect %>%
+  as_tibble() %>%
+  pivot_longer(everything(), names_to = "feature", values_to = "effect") %>%
+  mutate(feature = str_replace(feature, "TRUE", ""))
+
+
+effect$feature <- factor(
+  effect$feature,
+  levels = unique(effect$feature)[rank(str_length(unique(effect$feature)))],
+  ordered = TRUE
+)
+
+effect %>%
+  filter(effect != 0) %>%
+  filter(!(feature %in% cat_features)) %>%
+  ggplot(aes(x = effect, y = feature)) +
+  geom_boxplot(aes(x = effect), orientation = "y") +
+  geom_vline(data = NULL, xintercept = 0, linetype="dotted") +
+  labs(x = "Effect on total claim amount")
+```
+
+
+
 
 Now we have the best model. I will retrain it on the whole data set. Then this can be used to predict on the test set when it is released:
 ```{r}
@@ -177,6 +281,9 @@ mod <- rq(total_claim_amount ~
 
 # Put test data here...
 ```
+
+
+
 
 
 
