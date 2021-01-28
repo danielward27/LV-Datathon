@@ -1,0 +1,141 @@
+---
+title: "Presentation"
+author: "Daniel Ward"
+date: "28/01/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo=FALSE}
+library(mgcv)
+library(tidyverse)
+library(quantreg)
+
+df <- read.csv("data/train_simple.csv", stringsAsFactors = TRUE)
+
+train_idx <- read.csv("data/X_train.csv")$X
+
+df <- df %>%
+  mutate(is_unemployed = employment_status == "Unemployed") %>%
+  select(-employment_status, -income, -vehicle_class)
+
+col_order <- c("monthly_premium_auto", "location_code", "is_unemployed", "total_claim_amount")
+
+df <- df[col_order]
+
+train_df <- df[train_idx, ]
+val_df <- df[-train_idx, ]
+
+# Define metric
+mean_abs_err <- function(y_hat, y){
+  sum(abs(y_hat - y)) / length(y_hat)
+}
+
+test_df <- read.csv("data/test_simple.csv", stringsAsFactors = TRUE)
+
+test_df <- test_df %>%
+  mutate(is_unemployed = employment_status == "Unemployed") %>%
+  select(-employment_status, -income, -vehicle_class)
+
+test_df <- test_df[col_order]
+```
+
+
+# Median Regression
+
+## What I tried before median regression
+
+- Tried linear models and generalised additive models
+
+- Both performed quite poorly (MAE ~90) on the validation set.
+
+## Why median regression
+- Gives a simple interpretable linear model which aims to fit to the median (rather than the mean).
+
+- Plotting the data, the relationships looked pretty linear.
+
+- The mean as used in standard linear regression, and minimizes the squared error cost function.
+
+- However, the median gives an optimal prediction for mean absolute error (MAE).
+
+- Imagine you are on a number line with 1 point to the left and two to the right. If you want to minimize the absolute distance between you and the points, you want to move right until you have the same number of points either side (the median).
+
+## Choosing features
+- Plotting features against the target variable.
+- Using random forest feature importances.
+- Cross-validation and removing non-significant features.
+
+Ended up with a very simple set of features:
+```{r}
+head(df)
+```
+
+## Why are these features useful?
+We can plot these features to see why they are useful for predicting:
+```{r echo = FALSE}
+df %>%
+  ggplot(aes(x = monthly_premium_auto, y = total_claim_amount,
+             col = location_code)) +
+  geom_point()
+
+df %>%
+  ggplot(aes(x = monthly_premium_auto, y = total_claim_amount,
+             colour = is_unemployed)) +
+  geom_point(alpha = 0.5)
+```
+
+## Cross validation results
+We found that the lowest mean absolute error could be found by including second order interactions between these variables.
+
+- Without second order interactions:
+
+```{r}
+mod <- rq(total_claim_amount ~ 
+            is_unemployed + monthly_premium_auto + location_code, 
+          data = train_df)
+
+y_hat <- predict(mod, val_df)
+
+mae <- mean_abs_err(y_hat, val_df$total_claim_amount)
+print(sprintf("MAE of %s on the validation set.", round(mae, 2)))
+```
+
+With second order interactions:
+```{r}
+mod <- rq(total_claim_amount ~ 
+            is_unemployed*monthly_premium_auto + 
+            location_code*monthly_premium_auto +
+            is_unemployed*location_code, data = train_df)
+
+y_hat <- predict(mod, val_df)
+
+sum <- summary.rq(mod, se = "boot")
+
+mae <- mean_abs_err(y_hat, val_df$total_claim_amount)
+print(sprintf("MAE of %s on the validation set.", round(mae, 2)))
+```
+
+## Evaluate the model on the test set
+Now a model has been chosen, we can retrain on the train + validation data sets, and check the mean absolute error on the test set.
+```{r}
+mod <- rq(total_claim_amount ~ 
+            is_unemployed*monthly_premium_auto + 
+            location_code*monthly_premium_auto +
+            is_unemployed*location_code, data = df)
+
+y_hat <- predict(mod, test_df)
+
+sum <- summary.rq(mod, se = "boot")
+
+mae <- mean_abs_err(y_hat, test_df$total_claim_amount)
+print(sprintf("MAE of %s on the test set.", round(mae, 2)))
+```
+
+Achieved a MAE of 82.67 on the test set.
+
+
+
